@@ -29,22 +29,11 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      const allowed = [
-        "http://localhost:5173",
-        "http://localhost:4173",
-        process.env.FRONTEND_URL,
-      ].filter(Boolean);
-      if (!origin) return callback(null, true);
-      if (
-        allowed.includes(origin) ||
-        /^http:\/\/192\.168\.\d+\.\d+/.test(origin)
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS bloqueado: ${origin}`));
-      }
-    },
+    origin: [
+      FRONTEND_URL,
+      "http://localhost:5173",
+      /^http:\/\/192\.168\.\d+\.\d+/,
+    ],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "Cookie"],

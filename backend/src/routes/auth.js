@@ -112,6 +112,8 @@ router.post("/logout", async (req, res) => {
 
 // GET /api/auth/me
 router.get("/me", async (req, res) => {
+  console.log('Cookies recibidas:', req.cookies);
+  console.log('Headers:', req.headers.cookie);
   const sessionId = req.cookies?.auth_session;
   if (!sessionId) return res.status(401).json({ error: "No autenticado" });
   try {
