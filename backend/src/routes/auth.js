@@ -118,13 +118,25 @@ router.post("/logout", async (req, res) => {
 // ── GET /api/auth/me ─────────────────────────────────
 router.get("/me", async (req, res) => {
   const token = getToken(req);
-  if (!token) return res.status(401).json({ error: "No autenticado" });
+  if (!token) {
+    console.log("❌ No llegó el token desde las cookies ni los headers.");
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  
   try {
     const { session, user } = await lucia.validateSession(token);
-    if (!session) return res.status(401).json({ error: "Sesión inválida" });
+    if (!session) {
+      console.log("❌ La sesión no existe en la DB o está expirada.");
+      return res.status(401).json({ error: "Sesión expirada o no encontrada" });
+    }
     res.json({ ok: true, user });
-  } catch {
-    res.status(401).json({ error: "Sesión inválida" });
+  } catch (error) {
+    // 🔥 ESTO NOS DIRÁ LA VERDAD EN LOS LOGS DE RENDER 🔥
+    console.error("🔥 Error interno al validar la sesión en /me:", error);
+    res.status(500).json({ 
+      error: "Error interno del servidor", 
+      detail: error.message 
+    });
   }
 });
 
