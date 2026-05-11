@@ -24,22 +24,43 @@ import pool from "./db/database.js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
-app.use(
-  cors({
-    origin: [
-      FRONTEND_URL,
+// ── CORS ──────────────────────────────────────────────
+const corsOptions = {
+  origin: (origin, callback) => {
+    const allowed = [
       "http://localhost:5173",
-      /^http:\/\/192\.168\.\d+\.\d+/,
-    ],
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
-    exposedHeaders: ["Set-Cookie"],
-  }),
-);
+      "http://localhost:4173",
+      process.env.FRONTEND_URL,
+    ].filter(Boolean);
+    if (
+      !origin ||
+      allowed.includes(origin) ||
+      /^http:\/\/192\.168\.\d+\.\d+/.test(origin)
+    ) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS bloqueado: ${origin}`));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  credentials: true,
+  allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+  exposedHeaders: ["Set-Cookie"],
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // preflight para todas las rutas
+
+// ── Middleware ────────────────────────────────────────
+app.use(express.json());
+app.use(cookieParser());
+
+app.use((req, _res, next) => {
+  console.log(`${new Date().toLocaleTimeString()} ${req.method} ${req.path}`);
+  next();
+});
 
 // ── Rutas ─────────────────────────────────────────────
 app.use("/api/auth", authRouter);
@@ -97,17 +118,14 @@ app.post("/api/whatsapp/enviar/:alquilerId/:tipo", async (req, res) => {
     rows: [a],
   } = await pool.query(
     `
-    SELECT a.*,
-      (a.fecha_devolucion::date - $1::date) AS dias_restantes
-    FROM alquileres a
-    WHERE a.id = $2 AND a.user_id = $3
+    SELECT a.*, (a.fecha_devolucion::date - $1::date) AS dias_restantes
+    FROM alquileres a WHERE a.id = $2 AND a.user_id = $3
   `,
     [hoy, alquilerId, userId],
   );
 
   if (!a) return res.status(404).json({ error: "Alquiler no encontrado" });
 
-  // Normalizar fecha
   a.fecha_devolucion = String(a.fecha_devolucion).slice(0, 10);
   a.dias_restantes = parseInt(a.dias_restantes);
 
@@ -120,10 +138,7 @@ app.post("/api/whatsapp/enviar/:alquilerId/:tipo", async (req, res) => {
   if (tipo === "confirmacion") result = await waConfirmacionAlquiler(a, items);
   else if (tipo === "por_vencer") result = await waAlquilerPorVencer(a);
   else if (tipo === "vencido") result = await waAlquilerVencido(a);
-  else
-    return res.status(400).json({
-      error: "Tipo inválido. Usar: confirmacion, por_vencer, vencido",
-    });
+  else return res.status(400).json({ error: "Tipo inválido" });
 
   res.json(result);
 });
@@ -137,5 +152,6 @@ app.use((err, _req, res, _next) => {
 // ── Inicio ────────────────────────────────────────────
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`\n🚀 Orthexus backend en http://localhost:${PORT}`);
+  console.log(`   WhatsApp: ${WA_CONFIGURED ? "✓" : "⚠ no configurado"}`);
   iniciarCron();
 });
