@@ -1,6 +1,7 @@
 // Usar variable de entorno en producción, localhost en desarrollo
-const BASE =
-  (import.meta.env.PUBLIC_API_URL || "http://localhost:3001") + "/api";
+import { PUBLIC_API_URL } from "$env/static/public";
+
+const BASE = (PUBLIC_API_URL || "http://localhost:3001") + "/api";
 
 async function request(method, path, body) {
   const opts = {
