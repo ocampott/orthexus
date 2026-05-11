@@ -1,8 +1,8 @@
 import { Lucia } from "lucia";
-import { PostgresJsAdapter } from "@lucia-auth/adapter-postgresql";
+import { pg } from "@lucia-auth/adapter-postgresql";
 import pool from "./db/database.js";
 
-const adapter = new PostgresJsAdapter(pool, {
+const adapter = pg(pool, {
   user: "users",
   session: "sessions",
 });
