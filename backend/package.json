@@ -1,0 +1,25 @@
+{
+  "name": "mi-local-backend",
+  "version": "1.0.0",
+  "description": "Backend para gestión de local comercial",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@lucia-auth/adapter-sqlite": "^3.0.2",
+    "arctic": "^3.7.0",
+    "axios": "^1.16.0",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^9.4.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.18.3",
+    "lucia": "^3.2.2",
+    "multer": "^2.1.1",
+    "node-cron": "^4.2.1"
+  }
+}
