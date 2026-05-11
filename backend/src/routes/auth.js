@@ -59,11 +59,14 @@ router.post("/register", async (req, res) => {
   );
 
   const session = await createSession(userId);
+  const sessionCookie = lucia.createSessionCookie(session.id);
+  res.appendHeader("Set-Cookie", sessionCookie.serialize());
+  
   const { rows } = await pool.query(
     `SELECT id, email, nombre, avatar_url, rol FROM users WHERE id = $1`,
     [userId],
   );
-  res.json({ ok: true, user: rows[0], token: session.id });
+  res.json({ ok: true, user: rows[0] });
 });
 
 // ── POST /api/auth/login ─────────────────────────────
@@ -85,6 +88,9 @@ router.post("/login", async (req, res) => {
     return res.status(401).json({ error: "Email o contraseña incorrectos." });
 
   const session = await createSession(user.id);
+  const sessionCookie = lucia.createSessionCookie(session.id);
+  res.appendHeader("Set-Cookie", sessionCookie.serialize());
+  
   res.json({
     ok: true,
     user: {
@@ -94,7 +100,6 @@ router.post("/login", async (req, res) => {
       avatar_url: user.avatar_url,
       rol: user.rol,
     },
-    token: session.id,
   });
 });
 
@@ -102,6 +107,11 @@ router.post("/login", async (req, res) => {
 router.post("/logout", async (req, res) => {
   const token = getToken(req);
   if (token) await lucia.invalidateSession(token);
+  
+  // Limpiar la cookie en el navegador
+  const sessionCookie = lucia.createBlankSessionCookie();
+  res.appendHeader("Set-Cookie", sessionCookie.serialize());
+  
   res.json({ ok: true });
 });
 
@@ -209,8 +219,12 @@ router.get("/google/callback", async (req, res) => {
     }
 
     const session = await createSession(user.id);
-    // Redirigir con token en URL para que el frontend lo guarde en localStorage
-    res.redirect(`${FRONTEND_URL}/?token=${session.id}`);
+    const sessionCookie = lucia.createSessionCookie(session.id);
+    
+    // Setear la cookie y redirigir limpio al frontend
+    res.appendHeader("Set-Cookie", sessionCookie.serialize());
+    res.redirect(`${FRONTEND_URL}/`);
+    
   } catch (e) {
     console.error("[Google OAuth]", e.message);
     res.redirect(`${FRONTEND_URL}/login?error=google`);
