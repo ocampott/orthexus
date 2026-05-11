@@ -19,35 +19,19 @@ const google =
       )
     : null;
 
-    function setCookie(res, session) {
-      const cookie = lucia.createSessionCookie(session.id);
-      res.cookie(cookie.name, cookie.value, {
-        ...cookie.attributes,
-        httpOnly: true,
-        secure: true,
-        sameSite: 'none',
-        path: '/',
-        maxAge: 60 * 60 * 24 * 30, // 30 días en segundos
-      });
-    }
-    
-    function clearCookie(res) {
-      res.cookie('auth_session', '', {
-        httpOnly: true,
-        secure: true,
-        sameSite: 'none',
-        path: '/',
-        maxAge: 0,
-      });
-    }
-
-async function createSession(res, userId) {
-  const session = await lucia.createSession(userId, {});
-  setCookie(res, session);
-  return session;
+// ── Helpers ──────────────────────────────────────────
+async function createSession(userId) {
+  return await lucia.createSession(userId, {});
 }
 
-// POST /api/auth/register
+function getToken(req) {
+  return (
+    req.headers.authorization?.replace("Bearer ", "") ||
+    req.cookies?.auth_session
+  );
+}
+
+// ── POST /api/auth/register ──────────────────────────
 router.post("/register", async (req, res) => {
   const { email, password, nombre } = req.body;
   if (!email || !password || !nombre)
@@ -74,15 +58,15 @@ router.post("/register", async (req, res) => {
     [userId, email.toLowerCase(), nombre.trim(), hash],
   );
 
-  const session = await createSession(res, userId);
+  const session = await createSession(userId);
   const { rows } = await pool.query(
     `SELECT id, email, nombre, avatar_url, rol FROM users WHERE id = $1`,
     [userId],
   );
-  res.json({ ok: true, user: rows[0], sessionId: session.id });
+  res.json({ ok: true, user: rows[0], token: session.id });
 });
 
-// POST /api/auth/login
+// ── POST /api/auth/login ─────────────────────────────
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
@@ -100,7 +84,7 @@ router.post("/login", async (req, res) => {
   if (!match)
     return res.status(401).json({ error: "Email o contraseña incorrectos." });
 
-  const session = await createSession(res, user.id);
+  const session = await createSession(user.id);
   res.json({
     ok: true,
     user: {
@@ -110,39 +94,31 @@ router.post("/login", async (req, res) => {
       avatar_url: user.avatar_url,
       rol: user.rol,
     },
-    sessionId: session.id,
+    token: session.id,
   });
 });
 
-// POST /api/auth/logout
+// ── POST /api/auth/logout ────────────────────────────
 router.post("/logout", async (req, res) => {
-  const sessionId = req.cookies?.auth_session;
-  if (sessionId) await lucia.invalidateSession(sessionId);
-  clearCookie(res);
+  const token = getToken(req);
+  if (token) await lucia.invalidateSession(token);
   res.json({ ok: true });
 });
 
-// GET /api/auth/me
+// ── GET /api/auth/me ─────────────────────────────────
 router.get("/me", async (req, res) => {
-  console.log('Cookies recibidas:', req.cookies);
-  console.log('Headers:', req.headers.cookie);
-  const sessionId = req.cookies?.auth_session;
-  if (!sessionId) return res.status(401).json({ error: "No autenticado" });
+  const token = getToken(req);
+  if (!token) return res.status(401).json({ error: "No autenticado" });
   try {
-    const { session, user } = await lucia.validateSession(sessionId);
-    if (!session) {
-      clearCookie(res);
-      return res.status(401).json({ error: "Sesión inválida" });
-    }
-    if (session.fresh) setCookie(res, session);
+    const { session, user } = await lucia.validateSession(token);
+    if (!session) return res.status(401).json({ error: "Sesión inválida" });
     res.json({ ok: true, user });
   } catch {
-    clearCookie(res);
     res.status(401).json({ error: "Sesión inválida" });
   }
 });
 
-// GET /api/auth/google
+// ── GET /api/auth/google ─────────────────────────────
 router.get("/google", async (req, res) => {
   if (!google)
     return res.status(503).json({ error: "Google OAuth no configurado." });
@@ -152,14 +128,14 @@ router.get("/google", async (req, res) => {
 
   res.cookie("google_oauth_state", state, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: true,
+    sameSite: "none",
     maxAge: 600000,
   });
   res.cookie("google_code_verifier", codeVerifier, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: true,
+    sameSite: "none",
     maxAge: 600000,
   });
 
@@ -170,7 +146,7 @@ router.get("/google", async (req, res) => {
   res.redirect(url.toString());
 });
 
-// GET /api/auth/google/callback
+// ── GET /api/auth/google/callback ───────────────────
 router.get("/google/callback", async (req, res) => {
   if (!google) return res.status(503).send("No configurado");
 
@@ -194,7 +170,6 @@ router.get("/google/callback", async (req, res) => {
     );
     const profile = await profileRes.json();
 
-    // Buscar por google_id primero, luego por email
     let { rows } = await pool.query(
       `SELECT * FROM users WHERE google_id = $1`,
       [profile.id],
@@ -233,8 +208,9 @@ router.get("/google/callback", async (req, res) => {
       );
     }
 
-    await createSession(res, user.id);
-    res.redirect(`${FRONTEND_URL}/?login=ok`);
+    const session = await createSession(user.id);
+    // Redirigir con token en URL para que el frontend lo guarde en localStorage
+    res.redirect(`${FRONTEND_URL}/?token=${session.id}`);
   } catch (e) {
     console.error("[Google OAuth]", e.message);
     res.redirect(`${FRONTEND_URL}/login?error=google`);

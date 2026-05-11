@@ -1,14 +1,24 @@
-// Usar variable de entorno en producción, localhost en desarrollo
 import { PUBLIC_API_URL } from "$env/static/public";
 
 const BASE = (PUBLIC_API_URL || "http://localhost:3001") + "/api";
 
+// ── Token management ─────────────────────────────────
+const getToken = () =>
+  typeof localStorage !== "undefined"
+    ? localStorage.getItem("auth_token")
+    : null;
+const setToken = (t) =>
+  typeof localStorage !== "undefined" && localStorage.setItem("auth_token", t);
+const removeToken = () =>
+  typeof localStorage !== "undefined" && localStorage.removeItem("auth_token");
+
+export { setToken, removeToken };
+
 async function request(method, path, body) {
-  const opts = {
-    method,
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-  };
+  const token = getToken();
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const opts = { method, credentials: "include", headers };
   if (body !== undefined) opts.body = JSON.stringify(body);
   const res = await fetch(BASE + path, opts);
   const data = await res.json().catch(() => ({}));
@@ -23,9 +33,20 @@ const patch = (p, b) => request("PATCH", p, b);
 const del = (p) => request("DELETE", p);
 
 export const authApi = {
-  register: (data) => post("/auth/register", data),
-  login: (data) => post("/auth/login", data),
-  logout: () => post("/auth/logout", {}),
+  register: async (data) => {
+    const r = await post("/auth/register", data);
+    if (r.token) setToken(r.token);
+    return r;
+  },
+  login: async (data) => {
+    const r = await post("/auth/login", data);
+    if (r.token) setToken(r.token);
+    return r;
+  },
+  logout: async () => {
+    removeToken();
+    return post("/auth/logout", {});
+  },
   me: () => get("/auth/me"),
   googleUrl: () => `${BASE}/auth/google`,
 };
@@ -66,12 +87,16 @@ export const proveedoresApi = {
   eliminar: (id) => del(`/proveedores/${id}`),
   reconvertir: (id) => post(`/proveedores/${id}/reconvertir`, {}),
   subirLista: async (id, archivo) => {
+    const token = getToken();
     const fd = new FormData();
     fd.append("lista", archivo);
+    const headers = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(`${BASE}/proveedores/${id}/lista`, {
       method: "POST",
       body: fd,
       credentials: "include",
+      headers,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || "Error al subir archivo");
@@ -81,12 +106,16 @@ export const proveedoresApi = {
 
 export const uploadsApi = {
   subir: async (tipo, archivo) => {
+    const token = getToken();
     const fd = new FormData();
     fd.append("imagen", archivo);
+    const headers = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(`${BASE}/uploads/${tipo}`, {
       method: "POST",
       body: fd,
       credentials: "include",
+      headers,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || "Error al subir archivo");

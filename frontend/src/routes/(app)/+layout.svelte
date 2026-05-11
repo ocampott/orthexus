@@ -4,6 +4,7 @@
   import { page } from "$app/stores";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
+  import { PUBLIC_API_URL } from "$env/static/public";
   import {
     toasts,
     notifStore,
@@ -138,8 +139,9 @@
       );
       const file = new File([blob], "logo.png", { type: "image/png" });
       const res = await uploadsApi.subir("logo", file);
-      // Agregar timestamp para evitar caché del browser
-      cfg.negocio_logo_url = `http://localhost:3001${res.url}?v=${Date.now()}`;
+      cfg.negocio_logo_url = res.url.startsWith("http")
+        ? `${res.url.split("?")[0]}?v=${Date.now()}`
+        : `${PUBLIC_API_URL || "http://localhost:3001"}${res.url.split("?")[0]}?v=${Date.now()}`;
     } catch (err) {
       toasts.error(err.message);
     } finally {
@@ -358,9 +360,12 @@
     guardandoConfig = true;
     try {
       // Strip query params before saving (no guardar el timestamp de caché)
-      const logoUrl = (
-        cfg.negocio_logo_url?.replace("http://localhost:3001", "") ?? ""
-      ).split("?")[0];
+      const logoUrl = (() => {
+        const url = cfg.negocio_logo_url ?? "";
+        if (!url) return "";
+        if (url.startsWith("http")) return url.split("?")[0];
+        return url.split("?")[0];
+      })();
       const saves = [
         ["negocio_nombre", cfg.negocio_nombre],
         ["color_primary", cfg.color_primary],
@@ -525,43 +530,58 @@
   }
 
   onMount(async () => {
-  // Auth guard
-  try {
-    const { user } = await authApi.me();
-    sessionStorage.setItem('orthexus_user', JSON.stringify(user));
-  } catch {
-    goto('/login'); return;
-  }
+    // Capturar token de Google OAuth redirect
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get("token");
+      if (token) {
+        localStorage.setItem("auth_token", token);
+        window.history.replaceState({}, "", "/");
+      }
+    }
 
-  // Aplicar defaults inmediatamente
-  aplicarCSSVars(cfg);
+    // Auth guard
+    try {
+      await authApi.me();
+    } catch {
+      goto("/login");
+      return;
+    }
 
-  // Cargar config del usuario desde DB
-  try {
-    const savedCfg = await configuracionApi.obtener();
-    cfg = {
-      negocio_nombre:         savedCfg.negocio_nombre         ?? cfg.negocio_nombre,
-      negocio_logo_url: (() => {
-        const url = savedCfg.negocio_logo_url;
-        if (!url) return '';
-        const base = url.startsWith('http') ? url.split('?')[0] : `http://localhost:3001${url.split('?')[0]}`;
-        return `${base}?v=${Date.now()}`;
-      })(),
-      color_primary:          savedCfg.color_primary          ?? cfg.color_primary,
-      color_bg:               savedCfg.color_bg               ?? cfg.color_bg,
-      color_sidebar:          savedCfg.color_sidebar          ?? cfg.color_sidebar,
-      color_sidebar_text:     savedCfg.color_sidebar_text     ?? cfg.color_sidebar_text,
-      color_btn_primary_text: savedCfg.color_btn_primary_text ?? cfg.color_btn_primary_text,
-      radio_tarjetas:         savedCfg.radio_tarjetas         ?? cfg.radio_tarjetas,
-      logo_object_fit:        savedCfg.logo_object_fit        ?? 'contain',
-    };
-    cfgOriginal = { ...cfg };
+    // Cargar config ANTES de mostrar nada — evita flash de colores default
+    try {
+      const savedCfg = await configuracionApi.obtener();
+      cfg = {
+        negocio_nombre: savedCfg.negocio_nombre ?? cfg.negocio_nombre,
+        negocio_logo_url: (() => {
+          const url = savedCfg.negocio_logo_url;
+          if (!url) return "";
+          const base = url.startsWith("http")
+            ? url.split("?")[0]
+            : `${PUBLIC_API_URL || "http://localhost:3001"}${url.split("?")[0]}`;
+          return `${base}?v=${Date.now()}`;
+        })(),
+        color_primary: savedCfg.color_primary ?? cfg.color_primary,
+        color_bg: savedCfg.color_bg ?? cfg.color_bg,
+        color_sidebar: savedCfg.color_sidebar ?? cfg.color_sidebar,
+        color_sidebar_text:
+          savedCfg.color_sidebar_text ?? cfg.color_sidebar_text,
+        color_btn_primary_text:
+          savedCfg.color_btn_primary_text ?? cfg.color_btn_primary_text,
+        radio_tarjetas: savedCfg.radio_tarjetas ?? cfg.radio_tarjetas,
+        logo_object_fit: savedCfg.logo_object_fit ?? "contain",
+      };
+      cfgOriginal = { ...cfg };
+    } catch {
+      /* usar defaults */
+    }
+
+    // Aplicar colores ya con los valores del usuario
     aplicarCSSVars(cfg);
-  } catch { /* usar defaults */ }
 
-  await refreshNotifications();
-  setInterval(refreshNotifications, 60_000);
-});
+    await refreshNotifications();
+    setInterval(refreshNotifications, 60_000);
+  });
 </script>
 
 <svelte:window
