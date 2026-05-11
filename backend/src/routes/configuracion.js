@@ -1,10 +1,9 @@
 import { Router } from "express";
 import { lucia } from "../auth.js";
-import db from "../db/database.js";
+import pool from "../db/database.js";
 
 const router = Router();
 
-// Obtener user_id — requerido para todas las rutas
 async function requireUser(req, res) {
   const sessionId = req.cookies?.auth_session;
   if (!sessionId) {
@@ -42,11 +41,11 @@ router.get("/", async (req, res) => {
   const userId = await requireUser(req, res);
   if (!userId) return;
 
-  const rows = db
-    .prepare(`SELECT clave, valor FROM configuracion WHERE user_id = ?`)
-    .all(userId);
+  const { rows } = await pool.query(
+    `SELECT clave, valor FROM configuracion WHERE user_id = $1`,
+    [userId],
+  );
 
-  // Merge defaults con valores del usuario
   const config = { ...DEFAULTS };
   for (const row of rows) config[row.clave] = row.valor;
 
@@ -60,12 +59,11 @@ router.put("/:clave", async (req, res) => {
 
   const { valor } = req.body;
 
-  db.prepare(
-    `
-    INSERT INTO configuracion (user_id, clave, valor) VALUES (?, ?, ?)
-    ON CONFLICT(user_id, clave) DO UPDATE SET valor = excluded.valor
-  `,
-  ).run(userId, req.params.clave, String(valor ?? ""));
+  await pool.query(
+    `INSERT INTO configuracion (user_id, clave, valor) VALUES ($1, $2, $3)
+     ON CONFLICT (user_id, clave) DO UPDATE SET valor = EXCLUDED.valor`,
+    [userId, req.params.clave, String(valor ?? "")],
+  );
 
   res.json({ clave: req.params.clave, valor });
 });

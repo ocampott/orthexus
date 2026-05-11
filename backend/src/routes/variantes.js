@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { lucia } from "../auth.js";
-import db from "../db/database.js";
+import pool from "../db/database.js";
 
 const router = Router({ mergeParams: true });
 
@@ -23,21 +23,20 @@ async function requireUser(req, res) {
   }
 }
 
-function getMargenGlobal(userId) {
-  const row = db
-    .prepare(
-      `SELECT valor FROM configuracion WHERE user_id = ? AND clave = 'margen_ganancia_default'`,
-    )
-    .get(userId);
-  return parseFloat(row?.valor ?? 30);
+async function getMargenGlobal(userId) {
+  const { rows } = await pool.query(
+    `SELECT valor FROM configuracion WHERE user_id = $1 AND clave = 'margen_ganancia_default'`,
+    [userId],
+  );
+  return parseFloat(rows[0]?.valor ?? 30);
 }
 
-function calcularPreciosVariante(variante, padre, userId) {
+async function calcularPreciosVariante(variante, padre, userId) {
   const costo = variante.precio_costo ?? padre.precio_costo;
   const margen =
     variante.margen_ganancia ??
     padre.margen_ganancia ??
-    getMargenGlobal(userId);
+    (await getMargenGlobal(userId));
   const c = parseFloat(costo) || 0;
   const m = parseFloat(margen) || 0;
   return {
@@ -49,27 +48,32 @@ function calcularPreciosVariante(variante, padre, userId) {
 router.get("/", async (req, res) => {
   const userId = await requireUser(req, res);
   if (!userId) return;
-  // Verificar que el producto pertenece al usuario
-  const padre = db
-    .prepare(`SELECT * FROM productos WHERE id = ? AND user_id = ?`)
-    .get(req.params.productoId, userId);
-  if (!padre) return res.status(404).json({ error: "Producto no encontrado" });
-  res.json(
-    db
-      .prepare(
-        `SELECT * FROM producto_variantes WHERE producto_id = ? AND activo = 1 ORDER BY orden ASC, nombre ASC`,
-      )
-      .all(req.params.productoId),
+
+  const {
+    rows: [padre],
+  } = await pool.query(
+    `SELECT * FROM productos WHERE id = $1 AND user_id = $2`,
+    [req.params.productoId, userId],
   );
+  if (!padre) return res.status(404).json({ error: "Producto no encontrado" });
+
+  const { rows } = await pool.query(
+    `SELECT * FROM producto_variantes WHERE producto_id = $1 AND activo = true ORDER BY orden ASC, nombre ASC`,
+    [req.params.productoId],
+  );
+  res.json(rows);
 });
 
 router.post("/", async (req, res) => {
   const userId = await requireUser(req, res);
   if (!userId) return;
 
-  const padre = db
-    .prepare(`SELECT * FROM productos WHERE id = ? AND user_id = ?`)
-    .get(req.params.productoId, userId);
+  const {
+    rows: [padre],
+  } = await pool.query(
+    `SELECT * FROM productos WHERE id = $1 AND user_id = $2`,
+    [req.params.productoId, userId],
+  );
   if (!padre) return res.status(404).json({ error: "Producto no encontrado" });
 
   const {
@@ -85,7 +89,7 @@ router.post("/", async (req, res) => {
   if (!nombre?.trim())
     return res.status(400).json({ error: "El nombre es obligatorio" });
 
-  const { precio_con_iva, precio_venta } = calcularPreciosVariante(
+  const { precio_con_iva, precio_venta } = await calcularPreciosVariante(
     {
       precio_costo: precio_costo ?? null,
       margen_ganancia: margen_ganancia ?? null,
@@ -95,15 +99,16 @@ router.post("/", async (req, res) => {
   );
 
   try {
-    const r = db
-      .prepare(
-        `
+    const {
+      rows: [nueva],
+    } = await pool.query(
+      `
       INSERT INTO producto_variantes
         (producto_id, nombre, sku, codigo_barras, precio_costo, margen_ganancia, precio_con_iva, precio_venta, stock_actual, stock_minimo, orden)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      RETURNING *
     `,
-      )
-      .run(
+      [
         req.params.productoId,
         nombre.trim(),
         sku || null,
@@ -115,16 +120,11 @@ router.post("/", async (req, res) => {
         stock_actual,
         stock_minimo,
         orden,
-      );
-    res
-      .status(201)
-      .json(
-        db
-          .prepare(`SELECT * FROM producto_variantes WHERE id = ?`)
-          .get(r.lastInsertRowid),
-      );
+      ],
+    );
+    res.status(201).json(nueva);
   } catch (err) {
-    if (err.message.includes("UNIQUE"))
+    if (err.code === "23505")
       return res.status(409).json({ error: "El código de barras ya existe" });
     throw err;
   }
@@ -134,16 +134,20 @@ router.put("/:id", async (req, res) => {
   const userId = await requireUser(req, res);
   if (!userId) return;
 
-  const padre = db
-    .prepare(`SELECT * FROM productos WHERE id = ? AND user_id = ?`)
-    .get(req.params.productoId, userId);
+  const {
+    rows: [padre],
+  } = await pool.query(
+    `SELECT * FROM productos WHERE id = $1 AND user_id = $2`,
+    [req.params.productoId, userId],
+  );
   if (!padre) return res.status(404).json({ error: "Producto no encontrado" });
 
-  const actual = db
-    .prepare(
-      `SELECT * FROM producto_variantes WHERE id = ? AND producto_id = ?`,
-    )
-    .get(req.params.id, req.params.productoId);
+  const {
+    rows: [actual],
+  } = await pool.query(
+    `SELECT * FROM producto_variantes WHERE id = $1 AND producto_id = $2`,
+    [req.params.id, req.params.productoId],
+  );
   if (!actual) return res.status(404).json({ error: "Variante no encontrada" });
 
   const {
@@ -160,45 +164,51 @@ router.put("/:id", async (req, res) => {
     precio_costo !== undefined ? precio_costo : actual.precio_costo;
   const nuevoMargen =
     margen_ganancia !== undefined ? margen_ganancia : actual.margen_ganancia;
-  const { precio_con_iva, precio_venta } = calcularPreciosVariante(
+  const { precio_con_iva, precio_venta } = await calcularPreciosVariante(
     { precio_costo: nuevoCosto, margen_ganancia: nuevoMargen },
     padre,
     userId,
   );
 
   try {
-    db.prepare(
+    const {
+      rows: [updated],
+    } = await pool.query(
       `
       UPDATE producto_variantes SET
-        nombre = COALESCE(?, nombre), sku = ?, codigo_barras = ?,
-        precio_costo = ?, margen_ganancia = ?, precio_con_iva = ?, precio_venta = ?,
-        stock_actual = COALESCE(?, stock_actual), stock_minimo = COALESCE(?, stock_minimo),
-        orden = COALESCE(?, orden)
-      WHERE id = ? AND producto_id = ?
+        nombre          = COALESCE($1, nombre),
+        sku             = $2,
+        codigo_barras   = $3,
+        precio_costo    = $4,
+        margen_ganancia = $5,
+        precio_con_iva  = $6,
+        precio_venta    = $7,
+        stock_actual    = COALESCE($8, stock_actual),
+        stock_minimo    = COALESCE($9, stock_minimo),
+        orden           = COALESCE($10, orden)
+      WHERE id = $11 AND producto_id = $12
+      RETURNING *
     `,
-    ).run(
-      nombre?.trim() ?? null,
-      sku !== undefined ? sku || null : actual.sku,
-      codigo_barras !== undefined
-        ? codigo_barras || null
-        : actual.codigo_barras,
-      nuevoCosto,
-      nuevoMargen,
-      precio_con_iva,
-      precio_venta,
-      stock_actual ?? null,
-      stock_minimo ?? null,
-      orden ?? null,
-      req.params.id,
-      req.params.productoId,
+      [
+        nombre?.trim() ?? null,
+        sku !== undefined ? sku || null : actual.sku,
+        codigo_barras !== undefined
+          ? codigo_barras || null
+          : actual.codigo_barras,
+        nuevoCosto,
+        nuevoMargen,
+        precio_con_iva,
+        precio_venta,
+        stock_actual ?? null,
+        stock_minimo ?? null,
+        orden ?? null,
+        req.params.id,
+        req.params.productoId,
+      ],
     );
-    res.json(
-      db
-        .prepare(`SELECT * FROM producto_variantes WHERE id = ?`)
-        .get(req.params.id),
-    );
+    res.json(updated);
   } catch (err) {
-    if (err.message.includes("UNIQUE"))
+    if (err.code === "23505")
       return res.status(409).json({ error: "El código de barras ya existe" });
     throw err;
   }
@@ -208,29 +218,33 @@ router.patch("/:id/stock", async (req, res) => {
   const userId = await requireUser(req, res);
   if (!userId) return;
 
-  const padre = db
-    .prepare(`SELECT * FROM productos WHERE id = ? AND user_id = ?`)
-    .get(req.params.productoId, userId);
+  const {
+    rows: [padre],
+  } = await pool.query(
+    `SELECT * FROM productos WHERE id = $1 AND user_id = $2`,
+    [req.params.productoId, userId],
+  );
   if (!padre) return res.status(404).json({ error: "Producto no encontrado" });
 
   const { cantidad, operacion = "set" } = req.body;
-  const v = db
-    .prepare(
-      `SELECT * FROM producto_variantes WHERE id = ? AND producto_id = ?`,
-    )
-    .get(req.params.id, req.params.productoId);
+  const {
+    rows: [v],
+  } = await pool.query(
+    `SELECT * FROM producto_variantes WHERE id = $1 AND producto_id = $2`,
+    [req.params.id, req.params.productoId],
+  );
   if (!v) return res.status(404).json({ error: "Variante no encontrada" });
 
   let nuevo;
-  if (operacion === "add") nuevo = v.stock_actual + cantidad;
-  else if (operacion === "subtract") nuevo = v.stock_actual - cantidad;
+  if (operacion === "add") nuevo = Number(v.stock_actual) + cantidad;
+  else if (operacion === "subtract") nuevo = Number(v.stock_actual) - cantidad;
   else nuevo = cantidad;
   if (nuevo < 0)
     return res.status(400).json({ error: "Stock no puede ser negativo" });
 
-  db.prepare(`UPDATE producto_variantes SET stock_actual = ? WHERE id = ?`).run(
-    nuevo,
-    req.params.id,
+  await pool.query(
+    `UPDATE producto_variantes SET stock_actual = $1 WHERE id = $2`,
+    [nuevo, req.params.id],
   );
   res.json({ stock_actual: nuevo });
 });
@@ -238,13 +252,19 @@ router.patch("/:id/stock", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   const userId = await requireUser(req, res);
   if (!userId) return;
-  const padre = db
-    .prepare(`SELECT * FROM productos WHERE id = ? AND user_id = ?`)
-    .get(req.params.productoId, userId);
+
+  const {
+    rows: [padre],
+  } = await pool.query(
+    `SELECT * FROM productos WHERE id = $1 AND user_id = $2`,
+    [req.params.productoId, userId],
+  );
   if (!padre) return res.status(404).json({ error: "Producto no encontrado" });
-  db.prepare(
-    `UPDATE producto_variantes SET activo = 0 WHERE id = ? AND producto_id = ?`,
-  ).run(req.params.id, req.params.productoId);
+
+  await pool.query(
+    `UPDATE producto_variantes SET activo = false WHERE id = $1 AND producto_id = $2`,
+    [req.params.id, req.params.productoId],
+  );
   res.json({ ok: true });
 });
 

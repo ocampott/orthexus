@@ -3,23 +3,22 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcrypt";
 import { Google } from "arctic";
 import { lucia } from "../auth.js";
-import db from "../db/database.js";
+import pool from "../db/database.js";
 
 const router = Router();
 
-// ── Google OAuth client ─────────────────────────────
-// Credenciales en variables de entorno:
-//   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:3001";
+
 const google =
   process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
     ? new Google(
         process.env.GOOGLE_CLIENT_ID,
         process.env.GOOGLE_CLIENT_SECRET,
-        "http://localhost:3001/api/auth/google/callback",
+        `${BACKEND_URL}/api/auth/google/callback`,
       )
     : null;
 
-// ── Helpers ─────────────────────────────────────────
 function setCookie(res, session) {
   const cookie = lucia.createSessionCookie(session.id);
   res.cookie(cookie.name, cookie.value, cookie.attributes);
@@ -36,7 +35,7 @@ async function createSession(res, userId) {
   return session;
 }
 
-// ── POST /api/auth/register ─────────────────────────
+// POST /api/auth/register
 router.post("/register", async (req, res) => {
   const { email, password, nombre } = req.body;
   if (!email || !password || !nombre)
@@ -46,10 +45,11 @@ router.post("/register", async (req, res) => {
       .status(400)
       .json({ error: "La contraseña debe tener al menos 6 caracteres." });
 
-  const existe = db
-    .prepare(`SELECT id FROM users WHERE email = ?`)
-    .get(email.toLowerCase());
-  if (existe)
+  const { rows: existe } = await pool.query(
+    `SELECT id FROM users WHERE email = $1`,
+    [email.toLowerCase()],
+  );
+  if (existe.length > 0)
     return res
       .status(409)
       .json({ error: "Ya existe una cuenta con ese email." });
@@ -57,31 +57,30 @@ router.post("/register", async (req, res) => {
   const hash = await bcrypt.hash(password, 12);
   const userId = randomUUID();
 
-  db.prepare(
-    `
-    INSERT INTO users (id, email, nombre, password_hash)
-    VALUES (?, ?, ?, ?)
-  `,
-  ).run(userId, email.toLowerCase(), nombre.trim(), hash);
+  await pool.query(
+    `INSERT INTO users (id, email, nombre, password_hash) VALUES ($1, $2, $3, $4)`,
+    [userId, email.toLowerCase(), nombre.trim(), hash],
+  );
 
   const session = await createSession(res, userId);
-  const user = db
-    .prepare(
-      `SELECT id, email, nombre, avatar_url, rol FROM users WHERE id = ?`,
-    )
-    .get(userId);
-  res.json({ ok: true, user, sessionId: session.id });
+  const { rows } = await pool.query(
+    `SELECT id, email, nombre, avatar_url, rol FROM users WHERE id = $1`,
+    [userId],
+  );
+  res.json({ ok: true, user: rows[0], sessionId: session.id });
 });
 
-// ── POST /api/auth/login ────────────────────────────
+// POST /api/auth/login
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
     return res.status(400).json({ error: "Email y contraseña requeridos." });
 
-  const user = db
-    .prepare(`SELECT * FROM users WHERE email = ? AND activo = 1`)
-    .get(email.toLowerCase());
+  const { rows } = await pool.query(
+    `SELECT * FROM users WHERE email = $1 AND activo = true`,
+    [email.toLowerCase()],
+  );
+  const user = rows[0];
   if (!user || !user.password_hash)
     return res.status(401).json({ error: "Email o contraseña incorrectos." });
 
@@ -103,7 +102,7 @@ router.post("/login", async (req, res) => {
   });
 });
 
-// ── POST /api/auth/logout ────────────────────────────
+// POST /api/auth/logout
 router.post("/logout", async (req, res) => {
   const sessionId = req.cookies?.auth_session;
   if (sessionId) await lucia.invalidateSession(sessionId);
@@ -111,11 +110,10 @@ router.post("/logout", async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── GET /api/auth/me ────────────────────────────────
+// GET /api/auth/me
 router.get("/me", async (req, res) => {
   const sessionId = req.cookies?.auth_session;
   if (!sessionId) return res.status(401).json({ error: "No autenticado" });
-
   try {
     const { session, user } = await lucia.validateSession(sessionId);
     if (!session) {
@@ -130,26 +128,23 @@ router.get("/me", async (req, res) => {
   }
 });
 
-// ── GET /api/auth/google ─────────────────────────────
 // GET /api/auth/google
 router.get("/google", async (req, res) => {
   if (!google)
-    return res.status(503).json({
-      error: "Google OAuth no configurado.",
-    });
+    return res.status(503).json({ error: "Google OAuth no configurado." });
 
   const state = randomUUID();
   const codeVerifier = randomUUID();
 
   res.cookie("google_oauth_state", state, {
     httpOnly: true,
-    secure: false,
+    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: 600000,
   });
   res.cookie("google_code_verifier", codeVerifier, {
     httpOnly: true,
-    secure: false,
+    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: 600000,
   });
@@ -169,9 +164,8 @@ router.get("/google/callback", async (req, res) => {
   const savedState = req.cookies?.google_oauth_state;
   const codeVerifier = req.cookies?.google_code_verifier;
 
-  if (!code || state !== savedState) {
-    return res.redirect("http://localhost:5173/login?error=google_state");
-  }
+  if (!code || state !== savedState)
+    return res.redirect(`${FRONTEND_URL}/login?error=google_state`);
 
   res.clearCookie("google_oauth_state");
   res.clearCookie("google_code_verifier");
@@ -186,35 +180,50 @@ router.get("/google/callback", async (req, res) => {
     );
     const profile = await profileRes.json();
 
-    let user =
-      db.prepare(`SELECT * FROM users WHERE google_id = ?`).get(profile.id) ??
-      db
-        .prepare(`SELECT * FROM users WHERE email = ?`)
-        .get(profile.email?.toLowerCase());
+    // Buscar por google_id primero, luego por email
+    let { rows } = await pool.query(
+      `SELECT * FROM users WHERE google_id = $1`,
+      [profile.id],
+    );
+    let user = rows[0];
+
+    if (!user) {
+      const { rows: byEmail } = await pool.query(
+        `SELECT * FROM users WHERE email = $1`,
+        [profile.email?.toLowerCase()],
+      );
+      user = byEmail[0];
+    }
 
     if (!user) {
       const userId = randomUUID();
-      db.prepare(
-        `INSERT INTO users (id, email, nombre, google_id, avatar_url) VALUES (?, ?, ?, ?, ?)`,
-      ).run(
-        userId,
-        profile.email.toLowerCase(),
-        profile.name,
-        profile.id,
-        profile.picture,
+      await pool.query(
+        `INSERT INTO users (id, email, nombre, google_id, avatar_url) VALUES ($1, $2, $3, $4, $5)`,
+        [
+          userId,
+          profile.email.toLowerCase(),
+          profile.name,
+          profile.id,
+          profile.picture,
+        ],
       );
-      user = db.prepare(`SELECT * FROM users WHERE id = ?`).get(userId);
+      const { rows: newUser } = await pool.query(
+        `SELECT * FROM users WHERE id = $1`,
+        [userId],
+      );
+      user = newUser[0];
     } else if (!user.google_id) {
-      db.prepare(
-        `UPDATE users SET google_id = ?, avatar_url = ? WHERE id = ?`,
-      ).run(profile.id, profile.picture, user.id);
+      await pool.query(
+        `UPDATE users SET google_id = $1, avatar_url = $2 WHERE id = $3`,
+        [profile.id, profile.picture, user.id],
+      );
     }
 
     await createSession(res, user.id);
-    res.redirect("http://localhost:5173/?login=ok");
+    res.redirect(`${FRONTEND_URL}/?login=ok`);
   } catch (e) {
     console.error("[Google OAuth]", e.message);
-    res.redirect("http://localhost:5173/login?error=google");
+    res.redirect(`${FRONTEND_URL}/login?error=google`);
   }
 });
 

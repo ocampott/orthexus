@@ -2,8 +2,6 @@ import express from "express";
 import cors from "cors";
 import "dotenv/config";
 import cookieParser from "cookie-parser";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
 
 import productosRouter from "./routes/productos.js";
 import ventasRouter from "./routes/ventas.js";
@@ -22,15 +20,20 @@ import {
   waAlquilerPorVencer,
   waAlquilerVencido,
 } from "./services/whatsapp.js";
-import db from "./db/database.js";
+import pool from "./db/database.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+
 app.use(
   cors({
-    origin: ["http://localhost:5173", /^http:\/\/192\.168\.\d+\.\d+/],
+    origin: [
+      FRONTEND_URL,
+      "http://localhost:5173",
+      /^http:\/\/192\.168\.\d+\.\d+/,
+    ],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true,
   }),
@@ -43,6 +46,7 @@ app.use((req, _res, next) => {
   next();
 });
 
+// ── Rutas ─────────────────────────────────────────────
 app.use("/api/auth", authRouter);
 app.use("/api/productos", productosRouter);
 app.use("/api/productos/:productoId/variantes", variantesRouter);
@@ -53,14 +57,7 @@ app.use("/api/configuracion", configuracionRouter);
 app.use("/api/uploads", uploadsRouter);
 app.use("/api/proveedores", proveedoresRouter);
 
-const uploadsPath = join(__dirname, "../uploads");
-app.use(
-  "/uploads",
-  express.static(uploadsPath, {
-    setHeaders: (res) => res.setHeader("X-Frame-Options", "SAMEORIGIN"),
-  }),
-);
-
+// ── Health ────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
@@ -69,6 +66,7 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+// ── WhatsApp ──────────────────────────────────────────
 app.get("/api/whatsapp/estado", (_req, res) => {
   res.json({
     configurado: WA_CONFIGURED,
@@ -86,7 +84,6 @@ app.post("/api/whatsapp/test-cron", async (_req, res) => {
   }
 });
 
-// Enviar WA puntual — verifica que el alquiler pertenece al usuario
 app.post("/api/whatsapp/enviar/:alquilerId/:tipo", async (req, res) => {
   const sessionId = req.cookies?.auth_session;
   let userId = null;
@@ -101,45 +98,49 @@ app.post("/api/whatsapp/enviar/:alquilerId/:tipo", async (req, res) => {
   const { alquilerId, tipo } = req.params;
   const hoy = new Date().toISOString().split("T")[0];
 
-  const a = db
-    .prepare(
-      `
+  const {
+    rows: [a],
+  } = await pool.query(
+    `
     SELECT a.*,
-      CAST((julianday(a.fecha_devolucion) - julianday(?)) AS INTEGER) as dias_restantes
+      (a.fecha_devolucion::date - $1::date) AS dias_restantes
     FROM alquileres a
-    WHERE a.id = ? AND a.user_id = ?
+    WHERE a.id = $2 AND a.user_id = $3
   `,
-    )
-    .get(hoy, alquilerId, userId);
+    [hoy, alquilerId, userId],
+  );
 
   if (!a) return res.status(404).json({ error: "Alquiler no encontrado" });
 
-  // Traer items del alquiler para la confirmación
-  const items = db
-    .prepare(`SELECT * FROM alquiler_items WHERE alquiler_id = ?`)
-    .all(alquilerId);
+  // Normalizar fecha
+  a.fecha_devolucion = String(a.fecha_devolucion).slice(0, 10);
+  a.dias_restantes = parseInt(a.dias_restantes);
+
+  const { rows: items } = await pool.query(
+    `SELECT * FROM alquiler_items WHERE alquiler_id = $1`,
+    [alquilerId],
+  );
 
   let result;
   if (tipo === "confirmacion") result = await waConfirmacionAlquiler(a, items);
   else if (tipo === "por_vencer") result = await waAlquilerPorVencer(a);
   else if (tipo === "vencido") result = await waAlquilerVencido(a);
   else
-    return res
-      .status(400)
-      .json({
-        error: "Tipo inválido. Usar: confirmacion, por_vencer, vencido",
-      });
+    return res.status(400).json({
+      error: "Tipo inválido. Usar: confirmacion, por_vencer, vencido",
+    });
 
   res.json(result);
 });
 
+// ── Error handler ─────────────────────────────────────
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ error: "Error interno", detail: err.message });
 });
 
+// ── Inicio ────────────────────────────────────────────
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`\n🚀 Orthexus backend en http://localhost:${PORT}`);
-  console.log(`   WhatsApp: ${WA_CONFIGURED ? "✓" : "⚠ no configurado"}`);
   iniciarCron();
 });
