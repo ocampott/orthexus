@@ -29,22 +29,28 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 app.use(
   cors({
-    origin: [
-      FRONTEND_URL,
-      "http://localhost:5173",
-      /^http:\/\/192\.168\.\d+\.\d+/,
-    ],
+    origin: (origin, callback) => {
+      const allowed = [
+        "http://localhost:5173",
+        "http://localhost:4173",
+        process.env.FRONTEND_URL,
+      ].filter(Boolean);
+      if (!origin) return callback(null, true);
+      if (
+        allowed.includes(origin) ||
+        /^http:\/\/192\.168\.\d+\.\d+/.test(origin)
+      ) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS bloqueado: ${origin}`));
+      }
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+    exposedHeaders: ["Set-Cookie"],
   }),
 );
-app.use(express.json());
-app.use(cookieParser());
-
-app.use((req, _res, next) => {
-  console.log(`${new Date().toLocaleTimeString()} ${req.method} ${req.path}`);
-  next();
-});
 
 // ── Rutas ─────────────────────────────────────────────
 app.use("/api/auth", authRouter);
