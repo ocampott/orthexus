@@ -22,11 +22,14 @@ const adapter = {
       },
       {
         id: r.uid,
-        email: r.email,
-        nombre: r.nombre,
-        avatar_url: r.avatar_url,
-        google_id: r.google_id,
-        rol: r.rol,
+        // 🔥 LA MAGIA ESTÁ AQUÍ: Envolver todo en 'attributes' 🔥
+        attributes: {
+          email: r.email,
+          nombre: r.nombre,
+          avatar_url: r.avatar_url,
+          google_id: r.google_id,
+          rol: r.rol,
+        },
       },
     ];
   },
