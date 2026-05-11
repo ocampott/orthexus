@@ -9,8 +9,6 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
-    "@lucia-auth/adapter-postgresql": "^3.1.2",
-    "@lucia-auth/adapter-sqlite": "^3.0.2",
     "@supabase/supabase-js": "^2.105.4",
     "arctic": "^3.7.0",
     "axios": "^1.16.0",
