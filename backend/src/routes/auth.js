@@ -19,15 +19,27 @@ const google =
       )
     : null;
 
-function setCookie(res, session) {
-  const cookie = lucia.createSessionCookie(session.id);
-  res.cookie(cookie.name, cookie.value, cookie.attributes);
-}
-
-function clearCookie(res) {
-  const blank = lucia.createBlankSessionCookie();
-  res.cookie(blank.name, blank.value, blank.attributes);
-}
+    function setCookie(res, session) {
+      const cookie = lucia.createSessionCookie(session.id);
+      res.cookie(cookie.name, cookie.value, {
+        ...cookie.attributes,
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+        path: '/',
+        maxAge: 60 * 60 * 24 * 30, // 30 días en segundos
+      });
+    }
+    
+    function clearCookie(res) {
+      res.cookie('auth_session', '', {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+        path: '/',
+        maxAge: 0,
+      });
+    }
 
 async function createSession(res, userId) {
   const session = await lucia.createSession(userId, {});
