@@ -6,3 +6,4 @@ frontend/.svelte-kit/
 frontend/build/
 .DS_Store
 .env
+frontend/.vercel/
