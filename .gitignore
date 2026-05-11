@@ -5,3 +5,4 @@ backend/.env
 frontend/.svelte-kit/
 frontend/build/
 .DS_Store
+.env
