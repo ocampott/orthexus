@@ -23,6 +23,7 @@ import {
 import pool from "./db/database.js";
 
 const app = express();
+app.set("trust proxy", 1); // <--- ¡AGREGA ESTO! Le dice a Express que confíe en el proxy de Render
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
