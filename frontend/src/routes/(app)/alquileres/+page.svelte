@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { alquileresApi, whatsappApi } from '$lib/api';
+  import Pagination from '$lib/components/Pagination.svelte';
 
   async function enviarWA(alquiler, tipo) {
     try {
@@ -13,6 +14,11 @@
 
   let vista = 'contratos'; // contratos | catalogo | calendario
   let contratos = [], catalogo = [], cargando = true;
+
+  // Paginación contratos
+  let paginaContratos = 1, tamanoPaginaContratos = 25;
+  $: paginadosContratos = contratos.slice((paginaContratos - 1) * tamanoPaginaContratos, paginaContratos * tamanoPaginaContratos);
+  function onPagContratos(e) { paginaContratos = e.detail.page; tamanoPaginaContratos = e.detail.pageSize; }
   let modalContrato = null, modalProducto = null;
   let detalleId = null, detalle = null, guardando = false;
   let editandoEnDetalle = false;
@@ -42,7 +48,8 @@
     cargando = true;
     try {
       [contratos, catalogo] = await Promise.all([alquileresApi.listar(), alquileresApi.catalogo()]);
-    } finally { cargando = false; }
+    } catch { /* no autenticado */ }
+    finally { cargando = false; }
   }
 
   // ── Calendario ────────────────────────────────────
@@ -380,7 +387,7 @@
                 <th>Estado</th><th></th>
               </tr></thead>
               <tbody>
-                {#each contratos as c}
+                {#each paginadosContratos as c}
                   {@const ek = c.vencido ? 'vencido' : c.estado}
                   {@const ec = ESTADO[ek] ?? ESTADO.activo}
                   <tr class:sel={detalleId===c.id} on:click={() => verDetalle(c.id)} style="cursor:pointer">
@@ -435,6 +442,7 @@
                 {/each}
               </tbody>
             </table>
+            <Pagination total={contratos.length} page={paginaContratos} pageSize={tamanoPaginaContratos} on:change={onPagContratos} />
           </div>
         {/if}
       </div>
@@ -448,7 +456,7 @@
               <h2 style="font-size:1rem;font-weight:800;margin-top:0.1rem">{detalle.cliente_nombre}</h2>
             </div>
             <div style="display:flex;gap:0.3rem">
-              <button class="btn btn-ghost btn-sm" on:click={() => { modalContrato = {...detalle, items: detalle.items?.map(i=>({...i,_prod:null}))??[]}; }}>✏️</button>
+              <button class="btn btn-ghost btn-sm" on:click={() => { modalContrato = {...detalle, fecha_inicio: String(detalle.fecha_inicio).slice(0,10), fecha_devolucion: String(detalle.fecha_devolucion).slice(0,10), items: detalle.items?.map(i=>({...i,_prod:null}))??[]}; }}>✏️</button>
               {#if detalle.cliente_telefono && detalle.estado === 'activo'}
                 <button
                   class="btn btn-sm"
@@ -464,11 +472,19 @@
           </div>
 
           <div style="display:flex;flex-direction:column;gap:0.4rem;margin-bottom:0.85rem">
-            {#each [['Teléfono', detalle.cliente_telefono],['DNI', detalle.cliente_dni],['Dirección', detalle.cliente_direccion],['Inicio', detalle.fecha_inicio],['Devolución', detalle.fecha_devolucion]] as [l,v]}
+            {#each [['Teléfono', detalle.cliente_telefono],['DNI', detalle.cliente_dni],['Dirección', detalle.cliente_direccion]] as [l,v]}
               {#if v}
                 <div style="display:flex;justify-content:space-between;font-size:13px">
                   <span class="text-muted2">{l}</span>
                   <span style="font-weight:600">{v}</span>
+                </div>
+              {/if}
+            {/each}
+            {#each [['Inicio', detalle.fecha_inicio],['Devolución', detalle.fecha_devolucion]] as [l,v]}
+              {#if v}
+                <div style="display:flex;justify-content:space-between;font-size:13px">
+                  <span class="text-muted2">{l}</span>
+                  <span style="font-weight:600">{new Date(String(v).slice(0,10) + 'T12:00:00').toLocaleDateString('es-AR')}</span>
                 </div>
               {/if}
             {/each}

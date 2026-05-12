@@ -3,12 +3,18 @@
   import * as XLSX from 'xlsx';
   import { proveedoresApi } from '$lib/api';
   import { toasts, showConfirm } from '$lib/stores';
+  import Pagination from '$lib/components/Pagination.svelte';
 
   const BASEURL = 'http://localhost:3001';
 
   // ── Estado proveedores ─────────────────────────────
   let proveedores = [];
   let cargando = true;
+
+  // Paginación
+  let paginaProv = 1, tamanoPaginaProv = 25;
+  $: paginadosProv = proveedores.slice((paginaProv - 1) * tamanoPaginaProv, paginaProv * tamanoPaginaProv);
+  function onPagProv(e) { paginaProv = e.detail.page; tamanoPaginaProv = e.detail.pageSize; }
   let seleccionado = null;
   let modalProveedor = null;
   let guardando = false;
@@ -159,6 +165,7 @@
   async function cargar() {
     cargando = true;
     try { proveedores = await proveedoresApi.listar(); }
+    catch { /* no autenticado */ }
     finally { cargando = false; }
   }
 
@@ -234,7 +241,7 @@
       </div>
     {:else}
       <div class="prov-list">
-        {#each proveedores as p}
+        {#each paginadosProv as p}
           <button class="prov-item" class:activo={seleccionado?.id === p.id} on:click={() => seleccionar(p)}>
             <div class="prov-avatar">{p.nombre.charAt(0).toUpperCase()}</div>
             <div class="prov-info">
@@ -246,6 +253,7 @@
             </div>
           </button>
         {/each}
+        <Pagination total={proveedores.length} page={paginaProv} pageSize={tamanoPaginaProv} pageSizes={[10,25,50]} on:change={onPagProv} />
       </div>
     {/if}
   </aside>

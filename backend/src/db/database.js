@@ -1,9 +1,20 @@
 import pkg from "pg";
-const { Pool } = pkg;
+const { Pool, types } = pkg;
+
+// Forzar que DATE (OID 1082) siempre se devuelva como string 'YYYY-MM-DD'
+// y no como objeto Date. Sin esto, el timezone de la sesión hace que pg
+// parsee las fechas como objetos y String() da "Mon May 12 2026...".
+types.setTypeParser(1082, (val) => val);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }, // requerido por Supabase
+});
+
+// Forzar timezone Argentina en cada conexión para que fecha::date siempre
+// use la hora local (UTC-3) y no UTC del servidor.
+pool.on('connect', (client) => {
+  client.query("SET timezone = 'America/Argentina/Buenos_Aires'");
 });
 
 // ── Inicializar schema ───────────────────────────────

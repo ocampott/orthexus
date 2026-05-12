@@ -45,6 +45,12 @@
     procesando = true;
     try {
       const p = await productosApi.porBarcode(codigo);
+      if (p.stock_actual <= 0) {
+        notif.agregar(`"${p.nombre}" sin stock`, 'error');
+        flashErr = true;
+        setTimeout(() => { flashErr = false; }, 600);
+        return;
+      }
       carrito.agregar(p);
       ultimoScan = p;
       flashOk = true;
@@ -69,7 +75,8 @@
     clearTimeout(timerBusq);
     if (termino.length < 2) { resultados = []; showResultados = false; return; }
     timerBusq = setTimeout(async () => {
-      resultados = await productosApi.buscar(termino);
+      const todos = await productosApi.buscar(termino);
+      resultados = todos.filter(p => p.stock_actual > 0);
       showResultados = resultados.length > 0;
     }, 220);
   }
@@ -203,7 +210,9 @@
                   <div class="qty-control">
                     <button class="qty-btn" on:click={() => carrito.setCantidad(item._key, item.cantidad - 1)}>−</button>
                     <span class="qty-val mono">{item.cantidad}</span>
-                    <button class="qty-btn" on:click={() => carrito.setCantidad(item._key, item.cantidad + 1)}>+</button>
+                    <button class="qty-btn qty-btn-add"
+                      disabled={item.cantidad >= item.stock_actual}
+                      on:click={() => carrito.setCantidad(item._key, item.cantidad + 1)}>+</button>
                   </div>
                 </td>
                 <td class="mono text-muted" style="text-align:right">{formatPeso(item.precio_unitario)}</td>
@@ -399,6 +408,8 @@
     transition: background 0.1s;
   }
   .qty-btn:hover { background: var(--bg4); }
+  .qty-btn-add:disabled { opacity: 0.3; cursor: not-allowed; }
+  .qty-btn-add:disabled:hover { background: var(--bg3); }
   .qty-val { min-width: 28px; text-align: center; font-size: 14px; font-weight: 700; }
   .del-btn {
     background: none; border: none; cursor: pointer;

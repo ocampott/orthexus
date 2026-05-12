@@ -9,18 +9,18 @@
   let visible = false, fadeOut = false;
 
   onMount(async () => {
-    // Si ya tiene sesión válida, redirigir
+    // Mostrar el formulario de inmediato para evitar flash de pantalla en blanco
+    setTimeout(() => visible = true, 10);
+
+    // Si ya tiene sesión válida, redirigir (sin bloquear la visibilidad)
     try {
       await authApi.me();
       goto('/');
-      return;
-    } catch { /* no hay sesión, mostrar login */ }
+    } catch { /* no hay sesión, quedarse en login */ }
 
     // Check si viene de callback de Google con error
     const params = new URLSearchParams(window.location.search);
     if (params.get('error') === 'google') error = 'Error al iniciar sesión con Google. Intentá de nuevo.';
-
-    setTimeout(() => visible = true, 10);
   });
 
   async function iniciarSesion() {

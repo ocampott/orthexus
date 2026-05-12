@@ -30,17 +30,22 @@ function crearCarrito() {
       const key = producto.variante_id ? `var-${producto.variante_id}` : `prod-${producto.id ?? producto.producto_id}`;
       update(items => {
         const ex = items.find(i => i._key === key);
-        if (ex) return items.map(i => i._key === key
-          ? { ...i, cantidad: i.cantidad + 1, subtotal: (i.cantidad + 1) * i.precio_unitario }
-          : i);
+        if (ex) {
+          if (ex.cantidad >= ex.stock_actual) return items;
+          return items.map(i => i._key === key
+            ? { ...i, cantidad: i.cantidad + 1, subtotal: (i.cantidad + 1) * i.precio_unitario }
+            : i);
+        }
+        const precio = parseFloat(producto.precio_venta) || 0;
         return [...items, {
           _key:            key,
           producto_id:     producto.producto_id ?? producto.id,
           variante_id:     producto.variante_id ?? null,
           nombre:          producto.nombre,
-          precio_unitario: producto.precio_venta,
+          precio_unitario: precio,
+          stock_actual:    typeof producto.stock_actual === 'number' ? producto.stock_actual : Infinity,
           cantidad:        1,
-          subtotal:        producto.precio_venta,
+          subtotal:        precio,
         }];
       });
     },

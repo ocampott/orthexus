@@ -23,8 +23,15 @@ async function requireUser(req, res) {
   }
 }
 
+// Devuelve la fecha local Argentina (UTC-3) como 'YYYY-MM-DD'
 function fechaLocalAR(d = new Date()) {
-  return new Date(d.getTime() - 3 * 60 * 60 * 1000).toISOString().split("T")[0];
+  const ar = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+  return ar.toISOString().split("T")[0];
+}
+
+// new Date() en UTC-3
+function nowAR() {
+  return new Date(Date.now() - 3 * 60 * 60 * 1000);
 }
 
 // GET /api/ventas
@@ -88,7 +95,7 @@ router.get("/resumen-semana", async (req, res) => {
   const userId = await requireUser(req, res);
   if (!userId) return;
 
-  const now = new Date();
+  const now = nowAR();
   const day = now.getDay() === 0 ? 6 : now.getDay() - 1;
   const lunes = new Date(now);
   lunes.setDate(now.getDate() - day);
@@ -127,7 +134,7 @@ router.get("/resumen-mes", async (req, res) => {
   if (!userId) return;
 
   const { año, mes } = req.query;
-  const now = new Date();
+  const now = nowAR();
   const y = año || now.getFullYear();
   const m = String(mes || now.getMonth() + 1).padStart(2, "0");
   const periodo = `${y}-${m}`;

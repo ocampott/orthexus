@@ -2,8 +2,14 @@
   import { onMount } from 'svelte';
   import { productosApi } from '$lib/api';
   import { toasts, notif, formatPeso, refreshNotifications , showConfirm } from '$lib/stores';
+  import Pagination from '$lib/components/Pagination.svelte';
 
   let productos = [], categorias = [], cargando = true;
+
+  // Paginación
+  let paginaStock = 1, tamanoPaginaStock = 25;
+  $: paginadosStock = productos.slice((paginaStock - 1) * tamanoPaginaStock, paginaStock * tamanoPaginaStock);
+  function onPagStock(e) { paginaStock = e.detail.page; tamanoPaginaStock = e.detail.pageSize; }
   let busqueda = '', categoriaFiltro = '', soloStockBajo = false;
   let modal = null, guardando = false;
 
@@ -16,7 +22,8 @@
         productosApi.listar({ q: busqueda, categoria: categoriaFiltro, bajo_stock: soloStockBajo ? '1' : '' }),
         productosApi.categorias()
       ]);
-    } finally { cargando = false; }
+    } catch { /* no autenticado */ }
+    finally { cargando = false; }
   }
 
   let timer;
@@ -69,13 +76,13 @@
   </div>
 
   <!-- Tabla -->
-  <div class="card" style="padding:0;overflow:hidden">
+  <div class="card" style="padding:0;display:flex;flex-direction:column;overflow:hidden">
     {#if cargando}
       <p style="padding:2rem;color:var(--text2)">Cargando...</p>
     {:else if productos.length === 0}
       <p style="padding:2rem;color:var(--text2)">No hay productos.</p>
     {:else}
-      <div style="overflow-x:auto">
+      <div style="flex:1;overflow-y:auto;overflow-x:auto">
         <table>
           <thead><tr>
             <th>Código</th><th>Nombre</th><th>Categoría</th>
@@ -87,7 +94,7 @@
             <th></th>
           </tr></thead>
           <tbody>
-            {#each productos as p}
+            {#each paginadosStock as p}
               <tr>
                 <td class="mono text-muted2" style="font-size:11.5px">{p.codigo_barras ?? '—'}</td>
                 <td>
@@ -114,6 +121,7 @@
             {/each}
           </tbody>
         </table>
+        <Pagination total={productos.length} page={paginaStock} pageSize={tamanoPaginaStock} on:change={onPagStock} />
       </div>
     {/if}
   </div>

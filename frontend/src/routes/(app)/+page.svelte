@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { whatsappApi } from '$lib/api';
+  import { whatsappApi, ventasApi, alquileresApi, productosApi } from '$lib/api';
   import { toasts } from '$lib/stores';
 
   async function enviarWA(a, tipo) {
@@ -253,7 +253,7 @@
   /* Tabs */
   .tabs-row { display:flex; gap:0.4rem; flex-wrap:wrap; }
   .tab-pill {
-    padding:0.4rem 1.1rem; border-radius:999px;
+    padding:0.4rem 1.1rem; border-radius:var(--radius);
     border:1.5px solid var(--border); background:var(--bg2);
     font-family:var(--font); font-size:13.5px; font-weight:700;
     color:var(--text2); cursor:pointer; transition:all 0.13s;

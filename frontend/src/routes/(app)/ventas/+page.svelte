@@ -2,8 +2,14 @@
   import { onMount } from 'svelte';
   import { ventasApi } from '$lib/api';
   import { toasts, formatPeso , showConfirm } from '$lib/stores';
+  import Pagination from '$lib/components/Pagination.svelte';
 
   let ventas = [], resumen = null, cargando = true;
+
+  // Paginación
+  let pagina = 1, tamanoPagina = 25;
+  $: paginados = ventas.slice((pagina - 1) * tamanoPagina, pagina * tamanoPagina);
+  function onPagChange(e) { pagina = e.detail.page; tamanoPagina = e.detail.pageSize; }
   let ventaDetalle = null;
   let detalleId = null;
   let cargandoDetalle = false;
@@ -21,14 +27,19 @@
 
   async function cargar() {
     cargando = true;
+    pagina = 1;
     try {
-      [ventas, resumen] = await Promise.all([
-        ventasApi.listar({ desde, hasta }),
-        ventasApi.resumenHoy(),
-      ]);
-      // Si había un detalle abierto, refrescarlo
+      ventas = await ventasApi.listar({ desde, hasta });
+      resumen = {
+        total_ventas:  ventas.length,
+        total_recaudado: ventas.reduce((s, v) => s + parseFloat(v.total || 0), 0),
+        efectivo:      ventas.filter(v => v.medio_pago === 'efectivo').reduce((s, v) => s + parseFloat(v.total || 0), 0),
+        transferencia: ventas.filter(v => v.medio_pago === 'transferencia').reduce((s, v) => s + parseFloat(v.total || 0), 0),
+        tarjeta:       ventas.filter(v => v.medio_pago === 'tarjeta').reduce((s, v) => s + parseFloat(v.total || 0), 0),
+      };
       if (detalleId) await abrirDetalle(detalleId);
-    } finally { cargando = false; }
+    } catch { /* no autenticado */ }
+    finally { cargando = false; }
   }
 
   async function abrirDetalle(id) {
@@ -75,9 +86,9 @@
   {#if resumen}
     <div class="kpi-row">
       <div class="card kpi-main">
-        <p class="kpi-lbl">Hoy — Total recaudado</p>
+        <p class="kpi-lbl">{desde === hasta ? desde : `${desde} → ${hasta}`} — Total recaudado</p>
         <p class="kpi-val mono text-green">{formatPeso(resumen.total_recaudado)}</p>
-        <p class="kpi-hint">{resumen.total_ventas} ventas</p>
+        <p class="kpi-hint">{resumen.total_ventas} venta{resumen.total_ventas !== 1 ? 's' : ''}</p>
       </div>
       {#each [['💵 Efectivo', resumen.efectivo], ['📲 Transferencia', resumen.transferencia], ['💳 Tarjeta', resumen.tarjeta]] as [l, v]}
         <div class="card kpi-sm">
@@ -110,6 +121,7 @@
       {:else if ventas.length === 0}
         <div class="empty-state">No hay ventas en ese período.</div>
       {:else}
+        <div class="tabla-scroll">
         <table>
           <thead>
             <tr>
@@ -122,7 +134,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each ventas as v}
+            {#each paginados as v}
               <tr
                 class:sel={detalleId === v.id}
                 on:click={() => abrirDetalle(v.id)}
@@ -146,6 +158,8 @@
             {/each}
           </tbody>
         </table>
+        </div>
+        <Pagination total={ventas.length} page={pagina} pageSize={tamanoPagina} on:change={onPagChange} />
       {/if}
     </div>
 
@@ -250,7 +264,8 @@
     grid-template-columns: 1fr 300px;
   }
 
-  .tabla-wrap { padding: 0; overflow: hidden; }
+  .tabla-wrap { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .tabla-scroll { flex: 1; overflow-y: auto; overflow-x: auto; }
   .empty-state { padding: 2.5rem; text-align: center; color: var(--text2); font-size: 14px; }
 
   /* Detalle panel */

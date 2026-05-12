@@ -18,6 +18,11 @@
     authApi,
   } from "$lib/api"; // ← authApi acá
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
+
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } },
+  });
 
   // ── Nav ────────────────────────────────────────────
   const nav = [
@@ -57,6 +62,9 @@
     href === "/"
       ? $page.url.pathname === "/"
       : $page.url.pathname.startsWith(href);
+
+  // ── Init guard ────────────────────────────────────
+  let inicializado = false;
 
   // ── Sidebar collapsed ──────────────────────────────
   let collapsed = false;
@@ -490,11 +498,17 @@
   $: activeNotifs = $notifStore.filter((n) => !dismissed.has(n.id));
   $: notifCount = activeNotifs.length;
 
+  function saveDismissed(set) {
+    try { localStorage.setItem('notif_dismissed', JSON.stringify([...set])); } catch {}
+  }
+
   function dismiss(id) {
     dismissed = new Set([...dismissed, id]);
+    saveDismissed(dismissed);
   }
   function dismissAll() {
-    dismissed = new Set(activeNotifs.map((n) => n.id));
+    dismissed = new Set([...dismissed, ...activeNotifs.map((n) => n.id)]);
+    saveDismissed(dismissed);
   }
 
   function iconKind(kind) {
@@ -530,6 +544,12 @@
   }
 
   onMount(async () => {
+    // Restaurar notificaciones descartadas
+    try {
+      const saved = localStorage.getItem('notif_dismissed');
+      if (saved) dismissed = new Set(JSON.parse(saved));
+    } catch {}
+
     // Capturar token de Google OAuth redirect
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -579,6 +599,7 @@
     // Aplicar colores ya con los valores del usuario
     aplicarCSSVars(cfg);
 
+    inicializado = true;
     await refreshNotifications();
     setInterval(refreshNotifications, 60_000);
   });
@@ -591,30 +612,27 @@
   }}
 />
 
-<div class="shell" class:fading={fadeOut}>
+{#if !inicializado}
+  <div class="init-loading">
+    <div class="init-spinner"></div>
+  </div>
+{/if}
+
+<div class="shell" class:fading={fadeOut} class:hidden={!inicializado}>
   <!-- ─── Sidebar ─────────────────────────────── -->
   <nav class="sidebar" class:collapsed>
     <!-- Brand -->
     <div class="brand">
       <button
         class="brand-logo"
-        class:has-img={!!cfg.negocio_logo_url}
         on:click|stopPropagation={() => (showConfigMenu = !showConfigMenu)}
         title="Configuración del negocio"
       >
-        {#if cfg.negocio_logo_url}
-          <img
-            src={cfg.negocio_logo_url}
-            alt="logo"
-            style="width:26px;height:26px;object-fit:{cfg.logo_object_fit};border-radius:4px;background:{cfg.color_sidebar}"
-          />
-        {:else}
-          <img
-            src="/logo-isotipo.png"
-            alt="Orthexus"
-            style="width:26px;height:26px;object-fit:contain;mix-blend-mode:screen"
-          />
-        {/if}
+        <img
+          src="/logo-isotipo.png"
+          alt="Orthexus"
+          style="width:44px;height:44px;object-fit:contain;mix-blend-mode:screen"
+        />
       </button>
       {#if !collapsed}
         <div class="brand-text">
@@ -870,7 +888,7 @@
                     <a
                       href={n.href}
                       class="notif-item"
-                      on:click={() => (showNotif = false)}
+                      on:click={() => { dismiss(n.id); showNotif = false; }}
                     >
                       <div class="notif-item-icon" style="--ic:{ic.color}">
                         <svg
@@ -1017,7 +1035,9 @@
 
     <!-- Page content -->
     <main class="main-content">
-      <slot />
+      <QueryClientProvider client={queryClient}>
+        <slot />
+      </QueryClientProvider>
     </main>
   </div>
 </div>
@@ -1548,6 +1568,22 @@
 {/if}
 
 <style>
+  /* Init loading */
+  .init-loading {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg, #f4f7fa);
+    z-index: 9999;
+  }
+  .init-spinner {
+    width: 36px; height: 36px;
+    border: 3px solid rgba(0,71,171,0.15);
+    border-top-color: #0047AB;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   /* Shell */
   .shell {
     display: flex;
@@ -1558,6 +1594,10 @@
   }
   .shell.fading {
     opacity: 0;
+    pointer-events: none;
+  }
+  .shell.hidden {
+    visibility: hidden;
     pointer-events: none;
   }
 
@@ -1586,8 +1626,8 @@
     min-height: 64px;
   }
   .brand-logo {
-    width: 36px;
-    height: 36px;
+    width: 48px;
+    height: 48px;
     flex-shrink: 0;
     border-radius: 10px;
     background: var(--gradient-pr);
@@ -1596,6 +1636,13 @@
     justify-content: center;
     color: white;
     box-shadow: var(--shadow-md);
+    border: none;
+    cursor: pointer;
+  }
+  .brand-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
   }
   .brand-name {
     font-weight: 700;

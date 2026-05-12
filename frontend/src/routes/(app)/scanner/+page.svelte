@@ -1,10 +1,50 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { productosApi, variantesApi } from '$lib/api';
+  import { productosApi, variantesApi, marcasApi } from '$lib/api';
   import { toasts, formatPeso, refreshNotifications } from '$lib/stores';
 
   // ── Modos de operación ────────────────────────────
   let modo = 'buscar'; // buscar | stock
+
+  // ── Marcas y categorías ───────────────────────────
+  let marcas = [];
+  let categorias = [];
+  let nuevaMarcaScanner = '';
+  let guardandoMarcaScanner = false;
+  let mostrarNuevaMarca = false;
+  // Categoría inline create para scanner
+  let nuevaCatScanner = '';
+  let agregandoCatScanner = false;
+  function confirmarNuevaCatSimple() {
+    const cat = nuevaCatScanner.trim();
+    if (!cat) { agregandoCatScanner = false; return; }
+    if (!categorias.includes(cat)) categorias = [...categorias, cat];
+    if (modalSimple) modalSimple.categoria = cat;
+    nuevaCatScanner = ''; agregandoCatScanner = false;
+  }
+  function confirmarNuevaCatPadre() {
+    const cat = nuevaCatScanner.trim();
+    if (!cat) { agregandoCatScanner = false; return; }
+    if (!categorias.includes(cat)) categorias = [...categorias, cat];
+    if (modalVariante) modalVariante.categoria = cat;
+    nuevaCatScanner = ''; agregandoCatScanner = false;
+  }
+  async function crearMarcaScanner() {
+    if (!nuevaMarcaScanner.trim()) return;
+    guardandoMarcaScanner = true;
+    try {
+      await marcasApi.crear({ nombre: nuevaMarcaScanner.trim() });
+      marcas = await marcasApi.listar();
+      const nueva = marcas.find(m => m.nombre === nuevaMarcaScanner.trim());
+      if (nueva) {
+        if (modalSimple) modalSimple.marca_id = nueva.id;
+        if (modalVariante) modalVariante.marca_id = nueva.id;
+      }
+      nuevaMarcaScanner = '';
+      mostrarNuevaMarca = false;
+    } catch(e) { toasts.error(e.message); }
+    finally { guardandoMarcaScanner = false; }
+  }
 
   // ── Scanner buffer ────────────────────────────────
   let buffer = '', bufferTimer = null, procesando = false;
@@ -49,7 +89,11 @@
     bufferTimer = setTimeout(() => buffer = '', 280);
   }
 
-  onMount(() => { /* svelte:window maneja keydown */ });
+  onMount(async () => {
+    try {
+      [marcas, categorias] = await Promise.all([marcasApi.listar(), productosApi.categorias()]);
+    } catch { /* silencioso */ }
+  });
   onDestroy(() => {});
 
   function flash(ok) {
@@ -129,9 +173,11 @@
   function elegirSimple() {
     modalSimple = {
       nombre: '', codigo_barras: modalDecision.codigo, categoria: 'General',
-      unidad: 'unidad', descripcion: '', tiene_variantes: false,
+      marca_id: '', descripcion: '', tiene_variantes: false,
       precio_costo: '', margen_ganancia: '', stock_actual: '', stock_minimo: ''
     };
+    agregandoCatScanner = false; nuevaCatScanner = '';
+    mostrarNuevaMarca = false; nuevaMarcaScanner = '';
     modalDecision = null;
   }
 
@@ -195,6 +241,8 @@
       nombre_padre: '', categoria: 'General', marca_id: '',
       precio_costo_padre: '', margen_ganancia_padre: '',
     };
+    agregandoCatScanner = false; nuevaCatScanner = '';
+    mostrarNuevaMarca = false; nuevaMarcaScanner = '';
   }
 
   async function crearPadre() {
@@ -204,6 +252,7 @@
       padreSeleccionado = await productosApi.crear({
         nombre:          modalVariante.nombre_padre.trim(),
         categoria:       modalVariante.categoria || 'General',
+        marca_id:        modalVariante.marca_id || null,
         tiene_variantes: 1,
         precio_costo:    0,
         margen_ganancia: null,
@@ -516,13 +565,42 @@
         <div class="field field-full"><label>Nombre *</label>
           <input class="input" bind:value={modalSimple.nombre} placeholder="Nombre del producto" autofocus />
         </div>
-        <div class="field"><label>Categoría</label>
-          <input class="input" bind:value={modalSimple.categoria} />
+        <div class="field">
+          <label>Marca</label>
+          {#if mostrarNuevaMarca}
+            <div style="display:flex;gap:0.4rem">
+              <input class="input" bind:value={nuevaMarcaScanner} placeholder="Nueva marca..." autofocus
+                on:keydown={e => { if(e.key==='Enter') crearMarcaScanner(); if(e.key==='Escape'){ mostrarNuevaMarca=false; nuevaMarcaScanner=''; } }} />
+              <button class="btn btn-primary btn-sm" on:click={crearMarcaScanner} disabled={guardandoMarcaScanner}>OK</button>
+              <button class="btn btn-ghost btn-sm" on:click={() => { mostrarNuevaMarca=false; nuevaMarcaScanner=''; }}>✕</button>
+            </div>
+          {:else}
+            <div style="display:flex;gap:0.4rem">
+              <select class="input" bind:value={modalSimple.marca_id}>
+                <option value="">Sin marca</option>
+                {#each marcas as m}<option value={m.id}>{m.nombre}</option>{/each}
+              </select>
+              <button class="btn btn-ghost btn-sm" style="white-space:nowrap" on:click={() => mostrarNuevaMarca=true}>+ Marca</button>
+            </div>
+          {/if}
         </div>
-        <div class="field"><label>Unidad</label>
-          <select class="input" bind:value={modalSimple.unidad}>
-            <option>unidad</option><option>kg</option><option>litro</option><option>metro</option>
-          </select>
+        <div class="field">
+          <label>Categoría</label>
+          {#if agregandoCatScanner}
+            <div style="display:flex;gap:0.4rem">
+              <input class="input" bind:value={nuevaCatScanner} placeholder="Nueva categoría..."
+                on:keydown={e => { if(e.key==='Enter') confirmarNuevaCatSimple(); if(e.key==='Escape'){ agregandoCatScanner=false; nuevaCatScanner=''; } }} />
+              <button class="btn btn-primary btn-sm" on:click={confirmarNuevaCatSimple}>OK</button>
+              <button class="btn btn-ghost btn-sm" on:click={() => { agregandoCatScanner=false; nuevaCatScanner=''; }}>✕</button>
+            </div>
+          {:else}
+            <div style="display:flex;gap:0.4rem">
+              <select class="input" bind:value={modalSimple.categoria}>
+                {#each categorias as c}<option value={c}>{c}</option>{/each}
+              </select>
+              <button class="btn btn-ghost btn-sm" style="white-space:nowrap" on:click={() => agregandoCatScanner=true}>+ Cat.</button>
+            </div>
+          {/if}
         </div>
       </div>
 
@@ -632,8 +710,42 @@
           <div class="field field-full"><label>Nombre del producto *</label>
             <input class="input" bind:value={modalVariante.nombre_padre} placeholder="Ej: Rodillera tubular" autofocus />
           </div>
-          <div class="field"><label>Categoría</label>
-            <input class="input" bind:value={modalVariante.categoria} placeholder="General" />
+          <div class="field">
+            <label>Marca</label>
+            {#if mostrarNuevaMarca}
+              <div style="display:flex;gap:0.4rem">
+                <input class="input" bind:value={nuevaMarcaScanner} placeholder="Nueva marca..."
+                  on:keydown={e => { if(e.key==='Enter') crearMarcaScanner(); if(e.key==='Escape'){ mostrarNuevaMarca=false; nuevaMarcaScanner=''; } }} />
+                <button class="btn btn-primary btn-sm" on:click={crearMarcaScanner} disabled={guardandoMarcaScanner}>OK</button>
+                <button class="btn btn-ghost btn-sm" on:click={() => { mostrarNuevaMarca=false; nuevaMarcaScanner=''; }}>✕</button>
+              </div>
+            {:else}
+              <div style="display:flex;gap:0.4rem">
+                <select class="input" bind:value={modalVariante.marca_id}>
+                  <option value="">Sin marca</option>
+                  {#each marcas as m}<option value={m.id}>{m.nombre}</option>{/each}
+                </select>
+                <button class="btn btn-ghost btn-sm" style="white-space:nowrap" on:click={() => mostrarNuevaMarca=true}>+ Marca</button>
+              </div>
+            {/if}
+          </div>
+          <div class="field">
+            <label>Categoría</label>
+            {#if agregandoCatScanner}
+              <div style="display:flex;gap:0.4rem">
+                <input class="input" bind:value={nuevaCatScanner} placeholder="Nueva categoría..."
+                  on:keydown={e => { if(e.key==='Enter') confirmarNuevaCatPadre(); if(e.key==='Escape'){ agregandoCatScanner=false; nuevaCatScanner=''; } }} />
+                <button class="btn btn-primary btn-sm" on:click={confirmarNuevaCatPadre}>OK</button>
+                <button class="btn btn-ghost btn-sm" on:click={() => { agregandoCatScanner=false; nuevaCatScanner=''; }}>✕</button>
+              </div>
+            {:else}
+              <div style="display:flex;gap:0.4rem">
+                <select class="input" bind:value={modalVariante.categoria}>
+                  {#each categorias as c}<option value={c}>{c}</option>{/each}
+                </select>
+                <button class="btn btn-ghost btn-sm" style="white-space:nowrap" on:click={() => agregandoCatScanner=true}>+ Cat.</button>
+              </div>
+            {/if}
           </div>
         </div>
 

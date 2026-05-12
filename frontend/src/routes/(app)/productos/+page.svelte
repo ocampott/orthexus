@@ -1,13 +1,21 @@
 <script>
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
   import { productosApi, marcasApi, configuracionApi, variantesApi } from '$lib/api';
   import { toasts, formatPeso, refreshNotifications , showConfirm } from '$lib/stores';
   import { precioInput, parsearPrecioInput } from '$lib/precio.js';
+  import Pagination from '$lib/components/Pagination.svelte';
 
   // ── Estado ────────────────────────────────────────
   let productos = [], marcas = [], categorias = [];
   let config = { margen_ganancia_default: '30' };
   let cargando = true;
+
+  // Paginación
+  let pagina = 1;
+  let tamanoPagina = 25;
+  $: paginados = productos.slice((pagina - 1) * tamanoPagina, pagina * tamanoPagina);
+  function onPagChange(e) { pagina = e.detail.page; tamanoPagina = e.detail.pageSize; }
 
   // Filtros
   let filtros = { q: '', marca_id: '', categoria: '', bajo_stock: false };
@@ -94,6 +102,18 @@
   let guardandoMarca = false;
   let margenEditable = '30';
 
+  // ── Categoría inline create ───────────────────────
+  let nuevaCategoria = '';
+  let agregandoCategoria = false;
+  function confirmarNuevaCategoria() {
+    const cat = nuevaCategoria.trim();
+    if (!cat) { agregandoCategoria = false; return; }
+    if (!categorias.includes(cat)) categorias = [...categorias, cat];
+    modalProducto.categoria = cat;
+    nuevaCategoria = '';
+    agregandoCategoria = false;
+  }
+
   onMount(cargar);
 
   async function cargar() {
@@ -110,12 +130,13 @@
         configuracionApi.obtener(),
       ]);
       margenEditable = config.margen_ganancia_default ?? '30';
-    } finally { cargando = false; }
+    } catch { /* no autenticado o backend caído — onMount redirige */ }
+    finally { cargando = false; }
   }
 
   let timer;
-  function onFiltro() { clearTimeout(timer); timer = setTimeout(cargar, 280); }
-  $: filtros.marca_id, filtros.categoria, filtros.bajo_stock, cargar();
+  function onFiltro() { clearTimeout(timer); timer = setTimeout(() => { pagina = 1; cargar(); }, 280); }
+  $: if (browser) (filtros.marca_id, filtros.categoria, filtros.bajo_stock, (pagina = 1, cargar()));
 
   // ── Cálculo de precios en tiempo real ─────────────
   function calcularPrecios(costo, margen) {
@@ -137,7 +158,7 @@
   const prodVacio = () => ({
     id: null,
     nombre: '', descripcion: '', sku: '', codigo_barras: '',
-    marca_id: '', categoria: 'General', unidad: 'unidad',
+    marca_id: '', categoria: 'General',
     tiene_variantes: false,
     precio_costo: 0, margen_ganancia: null,
     stock_actual: 0, stock_minimo: 0,
@@ -285,7 +306,7 @@
         <p style="font-size:13px;margin-top:0.25rem">Creá el primero con el botón "+ Nuevo producto"</p>
       </div>
     {:else}
-      <div style="overflow-x:auto">
+      <div class="tabla-scroll">
         <table style="table-layout:auto;width:100%;min-width:700px">
           <thead>
             <tr>
@@ -301,7 +322,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each productos as p}
+            {#each paginados as p}
               {@const tieneVariantes = !!p.tiene_variantes}
               {@const estaExpandido = expandidos.has(p.id)}
 
@@ -458,6 +479,7 @@
           </tbody>
         </table>
       </div>
+      <Pagination total={productos.length} page={pagina} pageSize={tamanoPagina} on:change={onPagChange} />
     {/if}
   </div>
 </div>
@@ -495,10 +517,21 @@
         </div>
         <div class="field">
           <label>Categoría</label>
-          <input class="input" bind:value={modalProducto.categoria} list="cats-list" />
-          <datalist id="cats-list">
-            {#each categorias as c}<option value={c} />{/each}
-          </datalist>
+          {#if agregandoCategoria}
+            <div style="display:flex;gap:0.4rem">
+              <input class="input" bind:value={nuevaCategoria} placeholder="Nueva categoría..." autofocus
+                on:keydown={e => { if (e.key === 'Enter') confirmarNuevaCategoria(); if (e.key === 'Escape') { agregandoCategoria = false; nuevaCategoria = ''; } }} />
+              <button class="btn btn-primary btn-sm" style="white-space:nowrap" on:click={confirmarNuevaCategoria}>OK</button>
+              <button class="btn btn-ghost btn-sm" on:click={() => { agregandoCategoria = false; nuevaCategoria = ''; }}>✕</button>
+            </div>
+          {:else}
+            <div style="display:flex;gap:0.4rem">
+              <select class="input" bind:value={modalProducto.categoria}>
+                {#each categorias as c}<option value={c}>{c}</option>{/each}
+              </select>
+              <button class="btn btn-ghost btn-sm" style="white-space:nowrap" on:click={() => agregandoCategoria = true}>+ Cat.</button>
+            </div>
+          {/if}
         </div>
         <div class="field">
           <label>SKU</label>
@@ -507,17 +540,6 @@
         <div class="field">
           <label>Código de barras</label>
           <input class="input mono" bind:value={modalProducto.codigo_barras} />
-        </div>
-        <div class="field">
-          <label>Unidad</label>
-          <select class="input" bind:value={modalProducto.unidad}>
-            <option>unidad</option>
-            <option>kg</option>
-            <option>litro</option>
-            <option>metro</option>
-            <option>caja</option>
-            <option>docena</option>
-          </select>
         </div>
       </div>
 
@@ -837,7 +859,8 @@
   }
 
   /* Tabla */
-  .tabla-card { padding: 0; overflow: hidden; flex: 1; }
+  .tabla-card { padding: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+  .tabla-scroll { flex: 1; overflow-y: auto; overflow-x: auto; }
 
   /* Override global td padding for compact table */
   .tabla-card :global(thead th) {
